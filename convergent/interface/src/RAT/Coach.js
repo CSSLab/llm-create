@@ -46,12 +46,11 @@ const Coach = () => {
     const handleVisibilityChange = () => {
       if (document.hidden) {
         outOfFocusStart.current = Date.now();
-        // console.log(`Went out of focus at: ${outOfFocusStart.current}`);
       } else {
         if (outOfFocusStart.current !== 0) {
           const currentFocusTime =
             (Date.now() - outOfFocusStart.current) / 1000;
-          // console.log(`Came back into focus, was out for: ${currentFocusTime} seconds`);
+
           setOutOfFocusTime((prevTime) => prevTime + currentFocusTime);
           outOfFocusStart.current = 0;
         }

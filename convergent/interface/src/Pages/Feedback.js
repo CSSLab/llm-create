@@ -12,12 +12,9 @@ const Feedback = () => {
   const { mTurk, addMTurk } = useContext(mTurkContext);
 
   const [sliderValue, setSliderValue] = useState(null);
-  // console.log(mTurk.assignmentId);
-  // console.log(mTurk.workerId);
   const handleChange = (event) => {
     setSliderValue(event.target.value);
   };
-  // const [date, setDate] = useState(new Date());
   const [q1, setQ1] = useState("");
   const [q2, setQ2] = useState("");
   const [q3, setQ3] = useState("");
@@ -38,7 +35,6 @@ const Feedback = () => {
       );
 
       // Redirect to the Prolific URL
-      console.log("here");
       window.location.href =
         "https://app.prolific.com/submissions/complete?cc=C1EXYXN1";
 
@@ -90,13 +86,6 @@ const Feedback = () => {
         ts_submitted_: new Date().toISOString(),
       };
 
-      // For MTurk submission: Set the value of a hidden input to include all necessary data
-      // const dataInput = document.createElement("input");
-      // dataInput.type = "hidden";
-      // dataInput.name = "data";
-      // dataInput.value = JSON.stringify(submissionData);
-      // event.target.appendChild(dataInput);
-      console.log(submissionData);
       submitData(submissionData)
         .then((result) => {
           console.log("Data submitted successfully:", result);

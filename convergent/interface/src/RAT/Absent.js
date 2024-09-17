@@ -45,12 +45,10 @@ const Absent = () => {
     const handleVisibilityChange = () => {
       if (document.hidden) {
         outOfFocusStart.current = Date.now();
-        // console.log(`Went out of focus at: ${outOfFocusStart.current}`);
       } else {
         if (outOfFocusStart.current !== 0) {
           const currentFocusTime =
             (Date.now() - outOfFocusStart.current) / 1000;
-          // console.log(`Came back into focus, was out for: ${currentFocusTime} seconds`);
           setOutOfFocusTime((prevTime) => prevTime + currentFocusTime);
           outOfFocusStart.current = 0;
         }
@@ -151,7 +149,6 @@ const Absent = () => {
     } else {
       setPromptId(promptId + 1);
       // reset states and timer
-      console.log(promptId);
       if (promptId === 3) {
         setTime(60);
       } else {
