@@ -1,0 +1,359 @@
+---
+title: "LLMs for Convergent Thinking"
+author: "Harsh Kumar, Ewan Jordan, Ashton Anderson"
+date: "`r Sys.Date()`"
+always_allow_html: true
+output:
+  html_document:
+    code_folding: hide
+    fig_height: 5
+    fig_width: 6
+    number_sections: yes
+    toc: yes
+    toc_depth: 4
+---
+
+
+```{r setup, include = F}
+
+library(tidyverse)
+library(scales)
+library(here)
+library(knitr)
+library(gridExtra)
+library(patchwork)
+library(reshape2)
+library(lmerTest)
+library(emmeans)
+library(dplyr)
+library(broom)
+library(ggbeeswarm)
+library(ggpubr)
+library(rstatix)
+library(broom)
+```
+
+# Set constants
+```{r set-constants}
+# set style
+theme_set(theme_bw())
+
+# set paths
+figure_dir <- here("figures/")
+data_dir <- here("data/")
+```
+
+# Load and clean data
+
+```{r load-data}
+hit_ids <- c("66dd0fe39bfb33794b562bc9") # fourth and final wave
+
+# read participants data
+participants <- hit_ids %>%
+  map_df(~read_csv(here(data_dir, sprintf("participants_%s.csv", .))))
+
+# read responses
+responses <- hit_ids %>%
+  map_df(~read_csv(here(data_dir, sprintf("responses_%s.csv", .))))
+
+# read verbal fluency responses
+fluency <- hit_ids %>%
+  map_df(~read_csv(here(data_dir, sprintf("fluency_%s.csv", .))))
+
+# relabel condition
+condition_labels <- c("absent" = "None",
+                          "generate" = "LLM Answer",
+                          "coach" = "LLM Guidance")
+participants <- participants %>%
+  mutate(condition = factor(condition,
+                                levels = names(condition_labels),
+                                labels = condition_labels))
+responses <- responses %>%
+  mutate(condition = factor(condition,
+                                levels = names(condition_labels),
+                                labels = condition_labels))
+
+# reorder phase as a factor with practice and then test
+phase_labels <- c("practice" = "Exposure", "test" = "Test")
+responses <- responses %>%
+  mutate(phase = factor(phase,
+                        levels = names(phase_labels),
+                        labels = phase_labels))
+```
+There were `r nrow(participants)` people who completed the experiment in total.
+
+## Remove anyone who looks as though they were spam answering the questions
+
+Excluding data from participants who fail to correctly answer the “attention check” question, after attempting the 4 questions, where participants were asked to select “numbers with units” which they came across during the task. The correct answer to this question is “none of these” options, so participants who answered otherwise will be excluded from our analyses.
+
+```{r filter}
+# Filter participants based on the survey_screener column  
+participants <- participants %>%  
+  filter(q3 == "Agree")  
+  
+# Filter responses based on the worker_ids of the filtered participants  
+responses <- responses %>%  
+  filter(workerid %in% participants$workerid)
+```
+
+# Sanity checks
+
+## Randomization check
+
+Check whether randomization is balanced across conditions (p-value should be large, indicating that the data are likely under the null of random assignment).
+
+```{r check-random-assignment}
+counts <- participants %>%
+  count(condition)
+
+kable(counts)
+
+chisq.test(counts$n)
+```
+```{r accuracy-by-condition-phase}
+plot_data <- responses %>%
+  group_by(workerid, phase, condition) %>%
+  summarize(frac_correct = mean(is_correct)) %>%
+  group_by(phase, condition) %>%
+  summarize(mean_frac_correct = mean(frac_correct) * 100,  # Scale to 0-100
+            se_frac_correct = (sd(frac_correct) / sqrt(n())) * 100)  # Scale SE to 0-100
+
+ggplot(plot_data, aes(x = phase, y = mean_frac_correct, group = condition, color = condition)) +  # Map color to condition
+  geom_point(aes(shape = condition), size = 6, position = position_dodge(width = 0.2)) +  # Increase size of the dots
+  geom_line(aes(linetype = condition), size = 1.2, position = position_dodge(width = 0.2)) +  # Slightly thicker lines
+  geom_errorbar(aes(ymin = mean_frac_correct - se_frac_correct, ymax = mean_frac_correct + se_frac_correct),
+                size = 1.2, width = 0.2, position = position_dodge(width = 0.2)) +  # Increase thickness of error bars
+  scale_shape_manual(values = c(15, 16, 17)) +  # Different shapes for each condition
+  scale_color_manual(values = c("#7F7F7F", "#e57a77", "#3d65a5")) +  # Lighter gray for the first condition
+  scale_linetype_manual(values = c("solid", "dashed", "dotted")) +  # Different line types
+  scale_x_discrete(expand = c(0.15, 0)) +  # Reduce the gap between phases
+  scale_y_continuous(labels = scales::percent_format(scale = 1)) +  # Y-axis percentage scale
+  coord_cartesian(clip = "off") +  # Ensure elements near the border are not cut off
+  labs(x = 'Phase', y = 'Accuracy (%)') +
+  theme_minimal(base_size = 12) +
+  theme(
+    panel.border = element_rect(color = "black", fill = NA, size = 0.5),  # Add a frame
+    panel.grid.major = element_blank(),  # Remove major grid lines
+    panel.grid.minor = element_blank(),  # Remove minor grid lines
+    axis.line = element_line(size = 0.5),  # Emphasize the axis lines
+    legend.position = c(0.95, 0.95),  # Top-right corner inside the plot
+    legend.justification = c("right", "top"),  # Align legend to the top right inside the plot
+    legend.title = element_blank(),  # Remove legend title for simplicity
+    legend.background = element_rect(fill = alpha("white", 0.7), color = NA),  # Semi-transparent background for the legend
+    axis.text = element_text(size = 22),  # Increase font size for axis labels
+    axis.title = element_text(size = 26),  # Increase font size for axis titles
+    legend.text = element_text(size = 20)  # Increase font size for legend text
+  )
+```
+```{r calculate-fluency-prepare-model-data}
+# Count the number of words listed by each participant
+fluency_count <- fluency %>%
+  group_by(workerid) %>%
+  summarize(verbal_fluency = n())  # Count the number of entries per worker
+
+# Merge the fluency count with the main dataset
+responses <- responses %>%
+  left_join(fluency_count, by = "workerid") %>%
+  mutate(verbal_fluency = ifelse(is.na(verbal_fluency), 0, verbal_fluency))  # Replace NA in verbal_fluency with 0
+
+# Use only the test data for the model
+model_data <- responses %>%
+  filter(phase == "Test")
+```
+
+```{r ancova}
+model <- aov(is_correct ~ verbal_fluency + condition, data = model_data)
+summary(model)
+```
+```{r post-hoc-comparisons}
+# Run Tukey's HSD for pairwise comparisons of the 'condition' factor
+tukey_results <- TukeyHSD(model, "condition")
+
+# Display Tukey's HSD results
+print(tukey_results)
+```
+
+```{r self-perceived-creativity}
+# Calculate the difference between How Creative?-2 and How Creative?-1
+participants <- participants %>%
+  mutate(creative_diff = `How Creative?-2` - `How Creative?-1`)
+
+# Calculate mean and SEM for each condition
+summary_data <- participants %>%
+  group_by(condition) %>%
+  summarize(
+    mean_diff = mean(creative_diff),
+    sem_diff = sd(creative_diff) / sqrt(n())
+  )
+
+plot_self_creativity <- ggplot() +
+  geom_point(data = summary_data, aes(x = condition, y = mean_diff, shape = condition, color = condition), size = 6) +  
+  geom_errorbar(data = summary_data, aes(x = condition, ymin = mean_diff - sem_diff, ymax = mean_diff + sem_diff, color = condition), 
+                size = 1.7, width = 0.25) +  
+  geom_hline(yintercept = 0, linetype = "dashed", color = "black", size = 0.5) +  # Add horizontal line at y=0
+  scale_shape_manual(values = c(15, 16, 17)) +  
+  scale_color_manual(values = c("#7F7F7F", "#e57a77", "#3d65a5")) +  
+  labs(x = 'Condition', y = 'Change in Reported\nSelf-Creativity Rating') +
+  ylim(-8, 2) +  # Set the y-axis limits
+  theme_minimal(base_size = 12) +
+  theme(
+    panel.border = element_rect(color = "black", fill = NA, size = 0.5),  
+    panel.grid.major = element_blank(),  
+    panel.grid.minor = element_blank(),  
+    axis.line = element_line(size = 0.5),  
+    legend.position = "none",  
+    axis.text.x = element_text(size = 18),  # Customize x-axis text font size
+    axis.text.y = element_text(size = 18),  # Customize y-axis text font size
+    axis.title.x = element_text(size = 26),  # Customize x-axis title font size
+    axis.title.y = element_text(size = 22),  # Customize y-axis title font size  
+    legend.text = element_text(size = 20)
+  )
+
+plot_self_creativity
+
+```
+```{r ai-use}
+# Convert Likert scale responses to numeric values
+participants <- participants %>%
+  mutate(pre_ai_feel = recode(`Increased AI use makes you feel-1`,
+                              "More concerned than excited" = -1,
+                              "Equally excited and concerned" = 0,
+                              "More excited than concerned" = 1),
+         post_ai_feel = recode(q2,
+                               "More concerned than excited" = -1,
+                               "Equally excited and concerned" = 0,
+                               "More excited than concerned" = 1))
+
+# Calculate the difference between post- and pre-experiment feelings
+participants <- participants %>%
+  mutate(feel_diff = post_ai_feel - pre_ai_feel)
+
+# Calculate mean and SEM for the difference by condition
+summary_data_feel_diff <- participants %>%
+  group_by(condition) %>%
+  summarize(
+    mean_diff = mean(feel_diff),
+    sem_diff = sd(feel_diff) / sqrt(n())
+  )
+
+# Plotting the mean difference with SEM
+plot_ai_use <- ggplot() +
+  #geom_quasirandom(data = participants, aes(x = condition, y = feel_diff, shape = condition, color = condition), size = 2, alpha = 0.6) +
+  geom_point(data = summary_data_feel_diff, aes(x = condition, y = mean_diff, color = condition, shape = condition), size = 6) +  # Larger points
+  geom_hline(yintercept = 0, linetype = "dashed", color = "black", size = 0.5) +  # Add horizontal line at y=0
+  geom_errorbar(data = summary_data_feel_diff, aes(x = condition, ymin = mean_diff - sem_diff, ymax = mean_diff + sem_diff, color = condition), 
+                size = 1.2, width = 0.2) +  # Thicker error bars with horizontal tips
+  scale_shape_manual(values = c(15, 16, 17)) +  # Keep consistent shapes across conditions
+  scale_color_manual(values = c("#7F7F7F", "#e57a77", "#3d65a5")) +  # Color-blind friendly palette
+  scale_y_continuous(breaks = c(-2, -1, 0, 1, 2), labels = c("-2 (More concerned)", "-1", "0", "1", "2 (More excited)")) +  # Adjust y-axis labels
+  labs(x = 'Condition', y = 'Change in Feeling\nabout AI Use') +  # Use delta (Δ) notation
+  ylim(-0.1, 0.1) +  # Set the y-axis limits
+  theme_minimal(base_size = 12) +
+  theme(
+    panel.border = element_rect(color = "black", fill = NA, size = 0.5),  # Add a frame
+    panel.grid.major = element_blank(),  # Remove major grid lines
+    panel.grid.minor = element_blank(),  # Remove minor grid lines
+    
+    axis.line = element_line(size = 0.5),  # Emphasize the axis lines
+    legend.position = "none", 
+    legend.title = element_blank(),  # Remove legend title for simplicity
+    
+    legend.background = element_rect(fill = alpha("white", 0.7), color = NA),  # Semi-transparent background for the legend
+    axis.text.x = element_text(size = 19),  # Customize x-axis text font size
+    axis.text.y = element_text(size = 20),  # Customize y-axis text font size
+    axis.title.x = element_text(size = 26),  # Customize x-axis title font size
+    axis.title.y = element_text(size = 22),  # Customize y-axis title font size  
+    legend.text = element_text(size = 20)
+    
+  )
+  
+plot_ai_use
+ggsave(filename="feeling.png")
+```
+
+```{r perceived-difficulty}
+plot_difficulty <- participants %>%
+  mutate(difficulty = factor(q1, levels = c("Very easy", "Somewhat easy", "Somewhat difficult", "Very difficult"))) %>%
+  group_by(condition) %>%
+  summarize(mean_difficulty = mean(as.numeric(difficulty)),
+            se = sd(as.numeric(difficulty)) / sqrt(n()), .groups = 'drop') %>%
+  ggplot(aes(x = condition, y = mean_difficulty, color = condition, shape = condition)) +
+  geom_point(, size = 6) +  # Increase the size of the points
+  geom_errorbar(aes(ymin = mean_difficulty - se, ymax = mean_difficulty + se), 
+                size = 1.2, width = 0.2) +  # Increase thickness and add horizontal tips
+  scale_shape_manual(values = c(15, 16, 17)) +  # Keep consistent shapes across conditions
+  scale_color_manual(values = c("#7F7F7F", "#e57a77", "#3d65a5")) +  # Color-blind friendly palette
+  labs(x = 'Condition', y = 'Perceived Difficulty\nof Test Rounds') +
+  theme_minimal(base_size = 12) +
+  theme(
+    panel.border = element_rect(color = "black", fill = NA, size = 0.5),  # Add a frame
+    panel.grid.major = element_blank(),  # Remove major grid lines
+    panel.grid.minor = element_blank(),  # Remove minor grid lines
+    axis.line = element_line(size = 0.5),  # Emphasize the axis lines
+    legend.position = "none",  # Remove the legend for simplicity
+    axis.text.x = element_text(size = 19),  # Customize x-axis text font size
+    axis.text.y = element_text(size = 20),  # Customize y-axis text font size
+    axis.title.x = element_text(size = 26),  # Customize x-axis title font size
+    axis.title.y = element_text(size = 22),  # Customize y-axis title font size  
+    legend.text = element_text(size = 20)
+  )
+
+plot_difficulty
+```
+
+
+```{r perceived-helpfulness-2}
+# Categorize responses as "Helpful" or "Not Helpful"
+participants <- participants %>%
+  mutate(helpful = ifelse(q4 %in% c("A little helpful", "Very helpful"), 1, 0))  # 1 for Helpful, 0 for Not Helpful
+
+# Calculate mean percentage and SEM for helpfulness by condition
+summary_data_helpfulness_pct <- participants %>%
+  group_by(condition) %>%
+  summarize(
+    mean_helpful_pct = mean(helpful) * 100,  # Mean percentage
+    sem_helpful_pct = sd(helpful) / sqrt(n()) * 100  # SEM percentage
+  )
+
+# Plotting the mean percentage of participants who found the practice round helpful with SEM
+plot_helpfulness <- ggplot(summary_data_helpfulness_pct, aes(x = condition, y = mean_helpful_pct, color = condition)) +
+  geom_point(aes(shape = condition), size = 6) +  # Point for mean percentage, increased size
+  geom_errorbar(aes(ymin = mean_helpful_pct - sem_helpful_pct, ymax = mean_helpful_pct + sem_helpful_pct), 
+                size = 1.2, width = 0.2) +  # Error bars with increased thickness and horizontal tips
+  #geom_quasirandom(data = participants, aes(x = condition, y = helpful * 100, shape = condition), size = 2, alpha = 0.6) +  # Overlay raw values
+  scale_shape_manual(values = c(15, 16, 17)) +  # Keep consistent shapes across conditions
+  scale_color_manual(values = c("#7F7F7F", "#e57a77", "#3d65a5")) +  # Color-blind friendly palette
+  scale_y_continuous(labels = scales::percent_format(scale = 1)) +  # Y-axis as percentage
+  labs(x = 'Condition',y = '% of Participants Who Found\nExposure Rounds Helpful') +
+  theme_minimal(base_size = 12) +
+  theme(
+    panel.border = element_rect(color = "black", fill = NA, size = 0.5),  # Add a frame
+    panel.grid.major = element_blank(),  # Remove major grid lines
+    panel.grid.minor = element_blank(),  # Remove minor grid lines
+    axis.line = element_line(size = 0.5),  # Emphasize the axis lines
+    legend.position = "none",  # Remove the legend for simplicity
+    legend.background = element_rect(fill = alpha("white", 0.7), color = NA),  # Semi-transparent background for the legend
+    axis.text.x = element_text(size = 19),  # Customize x-axis text font size
+    axis.text.y = element_text(size = 20),  # Customize y-axis text font size
+    axis.title.x = element_text(size = 26),  # Customize x-axis title font size
+    axis.title.y = element_text(size = 22),  # Customize y-axis title font size  
+    legend.text = element_text(size = 20)
+  )
+
+plot_helpfulness
+```
+
+
+# Save variables for .rtex document
+
+
+
+# R Session information with package versions
+
+Useful for reproducibility purposes
+
+```{r session-info}
+
+sessionInfo()
+
+```
