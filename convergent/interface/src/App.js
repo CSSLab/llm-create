@@ -6,7 +6,6 @@ import Absent from "./RAT/Absent";
 import Generate from "./RAT/Generate";
 import Coach from "./RAT/Coach";
 import Fluency from "./RAT/Fluency";
-import Refine from "./RAT/Refine";
 import Introduction from "./Pages/Captcha";
 import InstructFluency from "./Pages/InstructFluency";
 import InstructAbsent from "./Pages/InstructAbsent";
@@ -105,10 +104,6 @@ function App() {
                   element={<Generate />}
                 />
                 <Route path="/convergent-thinking/coach" element={<Coach />} />
-                <Route
-                  path="/convergent-thinking/refine"
-                  element={<Refine />}
-                />
                 <Route
                   path="/convergent-thinking/feedback"
                   element={<Feedback />}
