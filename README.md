@@ -7,5 +7,11 @@
 
 ## Running the Convergent Analysis
 1. Navigate to `convergent/analysis/`
-2. Install necessary packages with `install.packages(c("tidyverse", "scales", "here", "knitr", "gridExtra", "patchwork", "reshape2", "lmerTest", "emmeans", "dplyr", "broom", "ggbeeswarm", "ggpubr", "rstatix"))`
-3. Run `rmarkdown::render("convergent-analysis.Rmd")`
+2. Install necessary packages with
+   ```
+   install.packages(c("tidyverse", "scales", "here", "knitr", "gridExtra", "patchwork", "reshape2", "lmerTest", "emmeans", "dplyr", "broom", "ggbeeswarm", "ggpubr", "rstatix"))
+   ```
+4. Run
+   ```
+   rmarkdown::render("convergent-analysis.Rmd")
+   ```
