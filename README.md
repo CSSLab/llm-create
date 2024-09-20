@@ -6,7 +6,7 @@
 3. Launch the React application in development mode by running `npm start`
 
 ## Running the Convergent Analysis
-1. Navigate to `convergent/analysis/`
+1. Navigate to the `convergent/analysis/` directory
 2. Install necessary packages with
    ```
    install.packages(c("tidyverse", "scales", "here", "knitr", "gridExtra", "patchwork", "reshape2", "lmerTest", "emmeans", "dplyr", "broom", "ggbeeswarm", "ggpubr", "rstatix"))
@@ -15,3 +15,7 @@
    ```
    rmarkdown::render("convergent-analysis.Rmd")
    ```
+
+## Running the Divergent Analysis
+1. Navigate to the `divergent/analysis` directory
+2. Open the `ipynb` file and set up the correct csv file paths
